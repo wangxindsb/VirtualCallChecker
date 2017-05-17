@@ -22,6 +22,8 @@ public:
 };
 }
 
+//GDM (generic data map) to store two integers in the program state. 
+//One integer for constructors, one integer for destructors.
 REGISTER_TRAIT_WITH_PROGRAMSTATE(ConstructorFlag, unsigned)
 REGISTER_TRAIT_WITH_PROGRAMSTATE(DestructorFlag, unsigned)
 
@@ -33,10 +35,10 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     return;
 
   const CallExpr *CE = dyn_cast_or_null<CallExpr>(Call.getOriginExpr());
-  if (!CE)
-    return;
 
   ProgramStateRef state = C.getState();
+
+  // Enter a constructor, increase the corresponding integer
   if (dyn_cast<CXXConstructorDecl>(D)) {
     unsigned constructorflag = state->get<ConstructorFlag>();
     state = state->set<ConstructorFlag>(++constructorflag);
@@ -44,6 +46,7 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     return;
   }
 
+  // Enter a Destructor, increase the corresponding integer
   if (dyn_cast<CXXDestructorDecl>(D)) {
     unsigned destructorflag = state->get<DestructorFlag>();
     state = state->set<DestructorFlag>(++destructorflag);
@@ -51,6 +54,8 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     return;
   }
 
+  // First Check if a virtual method is called, then check the 
+  // GDM of constructor and destructor. 
   if (isVirtualCall(CE) && state->get<ConstructorFlag>() > 0) {
     if (!BT_CT) {
       BT_CT.reset(new BugType(this, "Virtual call in constructor", "not pure"));
@@ -72,6 +77,8 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   }
 }
 
+// The PreCall callback, when leave a constructor or a destructor, 
+// decrease the corresponding integer
 void VirtualCallChecker::checkPostCall(const CallEvent &Call, 
                                        CheckerContext &C) const {
 
@@ -89,15 +96,22 @@ void VirtualCallChecker::checkPostCall(const CallEvent &Call,
     return;
   }
 }
- 
+
+// The function to check if a virtual function is called
 bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
   bool callIsNonVirtual = false;
-  if (MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
+
+  if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
+    // If the member access is fully qualified (i.e., X::F), then treat
+    // this as a non-virtual call and do not warn.
     if (CME->getQualifier())
       callIsNonVirtual = true;
+
     if (Expr *base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(base))
         return false;
+
+      // The most derived class is marked final.
       if (base->getBestDynamicClassType()->hasAttr<FinalAttr>())
         callIsNonVirtual = true;
     }
