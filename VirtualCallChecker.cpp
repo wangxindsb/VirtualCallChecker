@@ -1,4 +1,5 @@
 #include "ClangSACheckers.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
@@ -11,7 +12,7 @@ using namespace ento;
 
 namespace {
 class VirtualCallChecker: public Checker<check::PreCall, check::PostCall> {
-  bool isVirtualCall(const CXXMethodDecl *MD) const;
+  bool isVirtualCall(const CallExpr *CE) const;
   mutable std::unique_ptr<BugType> BT_CT;
   mutable std::unique_ptr<BugType> BT_DT;
 
@@ -24,8 +25,17 @@ public:
 REGISTER_TRAIT_WITH_PROGRAMSTATE(ConstructorFlag, unsigned)
 REGISTER_TRAIT_WITH_PROGRAMSTATE(DestructorFlag, unsigned)
 
-void VirtualCallChecker::checkPreCall(const CallEvent &Call, CheckerContext &C) const {
-  const Decl *D = Call.getDecl();
+void VirtualCallChecker::checkPreCall(const CallEvent &Call, 
+                                      CheckerContext &C) const {
+
+  const Decl *D = dyn_cast_or_null<Decl>(Call.getDecl());
+  if (!D)
+    return;
+
+  const CallExpr *CE = dyn_cast_or_null<CallExpr>(Call.getOriginExpr());
+  if (!CE)
+    return;
+
   ProgramStateRef state = C.getState();
   if (dyn_cast<CXXConstructorDecl>(D)) {
     unsigned constructorflag = state->get<ConstructorFlag>();
@@ -40,31 +50,31 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call, CheckerContext &C) 
     C.addTransition(state);
     return;
   }
-    
-  if (auto *MD = dyn_cast<CXXMethodDecl>(D)) {
-    if (isVirtualCall(MD) && state->get<ConstructorFlag>()>0) {
-      if (!BT_CT) {
-        BT_CT.reset(new BugType(this, "Virtual call in constructor", "not pure"));
-      }
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      auto Reporter = llvm::make_unique<BugReport>(*BT_CT, BT_CT->getName(), N);
-      C.emitReport(std::move(Reporter));
-      return;
-    }
 
-    if (isVirtualCall(MD) && state->get<DestructorFlag>()>0) {
-      if (!BT_DT) {
-        BT_DT.reset(new BugType(this, "Virtual call in destructor", "not pure"));
-      }
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      auto Reporter = llvm::make_unique<BugReport>(*BT_DT, BT_DT->getName(), N);
-      C.emitReport(std::move(Reporter));
-      return;
+  if (isVirtualCall(CE) && state->get<ConstructorFlag>() > 0) {
+    if (!BT_CT) {
+      BT_CT.reset(new BugType(this, "Virtual call in constructor", "not pure"));
     }
+    ExplodedNode *N = C.generateNonFatalErrorNode();
+    auto Reporter = llvm::make_unique<BugReport>(*BT_CT, BT_CT->getName(), N);
+    C.emitReport(std::move(Reporter));
+    return;
+  }
+
+  if (isVirtualCall(CE) && state->get<DestructorFlag>() > 0) {
+    if (!BT_DT) {
+      BT_DT.reset(new BugType(this, "Virtual call in destructor", "not pure"));
+    }
+    ExplodedNode *N = C.generateNonFatalErrorNode();
+    auto Reporter = llvm::make_unique<BugReport>(*BT_DT, BT_DT->getName(), N);
+    C.emitReport(std::move(Reporter));
+    return;
   }
 }
 
-void VirtualCallChecker::checkPostCall(const CallEvent &Call, CheckerContext &C) const {
+void VirtualCallChecker::checkPostCall(const CallEvent &Call, 
+                                       CheckerContext &C) const {
+
   const Decl *D = Call.getDecl();
   ProgramStateRef state = C.getState();
   if (dyn_cast<CXXConstructorDecl>(D)) {
@@ -80,8 +90,22 @@ void VirtualCallChecker::checkPostCall(const CallEvent &Call, CheckerContext &C)
   }
 }
  
-bool VirtualCallChecker::isVirtualCall(const CXXMethodDecl *MD) const {
-  if (MD && MD->isVirtual() && !MD->hasAttr<FinalAttr>() &&
+bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
+  bool callIsNonVirtual = false;
+  if (MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
+    if (CME->getQualifier())
+      callIsNonVirtual = true;
+    if (Expr *base = CME->getBase()->IgnoreImpCasts()) {
+      if (!isa<CXXThisExpr>(base))
+        return false;
+      if (base->getBestDynamicClassType()->hasAttr<FinalAttr>())
+        callIsNonVirtual = true;
+    }
+  }
+
+  const CXXMethodDecl *MD =
+      dyn_cast_or_null<CXXMethodDecl>(CE->getDirectCallee());
+  if (MD && MD->isVirtual() && !callIsNonVirtual && !MD->hasAttr<FinalAttr>() &&
       !MD->getParent()->hasAttr<FinalAttr>())
     return true;
   return false;
