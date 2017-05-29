@@ -19,6 +19,19 @@ class VirtualCallChecker: public Checker<check::PreCall, check::PostCall> {
 public:
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
+
+private:
+  class VirtualBugVisitor : public BugReporterVisitorImpl<VirtualBugVisitor> {
+  public:
+    void Profile(llvm::FoldingSetNodeID &ID) const override{
+      static int x = 0;
+      ID.AddPointer(&x);
+    }
+    std::shared_ptr<PathDiagnosticPiece> VisitNode(const ExplodedNode *N,
+                                                   const ExplodedNode *PrevN,
+                                                   BugReporterContext &BRC,
+                                                   BugReport &BR) override;
+  };
 };
 }
 
@@ -27,6 +40,31 @@ public:
 REGISTER_TRAIT_WITH_PROGRAMSTATE(ConstructorFlag, unsigned)
 REGISTER_TRAIT_WITH_PROGRAMSTATE(DestructorFlag, unsigned)
 
+std::shared_ptr<PathDiagnosticPiece>
+VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
+                                                 const ExplodedNode *PrevN,
+                                                 BugReporterContext &BRC,
+                                                 BugReport &BR) {
+  // We need the last ctor/dtor which call the virtual function
+  // The visitor walks the ExplodedGraph backwards.
+  ProgramStateRef State = N->getState();
+  ProgramStateRef StatePrev = PrevN->getState();
+  const unsigned ctorflag = State->get<ConstructorFlag>();
+  const unsigned ctorflagPrev = StatePrev->get<ConstructorFlag>();
+  if (ctorflag == ctorflagPrev)
+    return nullptr; 
+  
+  const Stmt *S = PathDiagnosticLocation::getStmt(N); 
+  if (!S)
+    return nullptr;
+
+  // Generate the extra diagnostic.
+  PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
+                             N->getLocationContext());
+  return std::make_shared<PathDiagnosticEventPiece>(Pos, "called here");
+}
+
+  
 void VirtualCallChecker::checkPreCall(const CallEvent &Call, 
                                       CheckerContext &C) const {
 
@@ -62,6 +100,7 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     }
     ExplodedNode *N = C.generateNonFatalErrorNode();
     auto Reporter = llvm::make_unique<BugReport>(*BT_CT, BT_CT->getName(), N);
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>());
     C.emitReport(std::move(Reporter));
     return;
   }
@@ -77,7 +116,7 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   }
 }
 
-// The PreCall callback, when leave a constructor or a destructor, 
+// The PostCall callback, when leave a constructor or a destructor, 
 // decrease the corresponding integer
 void VirtualCallChecker::checkPostCall(const CallEvent &Call, 
                                        CheckerContext &C) const {
@@ -86,13 +125,15 @@ void VirtualCallChecker::checkPostCall(const CallEvent &Call,
   ProgramStateRef state = C.getState();
   if (dyn_cast<CXXConstructorDecl>(D)) {
     unsigned constructorflag = state->get<ConstructorFlag>();
-    state = state->set<ConstructorFlag>(--constructorflag);
+    state = state->set<ConstructorFlag>(constructorflag--);
+    C.addTransition(state);
     return;
   }
 
   if (dyn_cast<CXXDestructorDecl>(D)) {
     unsigned destructorflag = state->get<DestructorFlag>();
-    state = state->set<DestructorFlag>(--destructorflag);
+    state = state->set<DestructorFlag>(destructorflag--);
+    C.addTransition(state);
     return;
   }
 }
