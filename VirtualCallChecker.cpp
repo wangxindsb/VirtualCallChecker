@@ -125,14 +125,14 @@ void VirtualCallChecker::checkPostCall(const CallEvent &Call,
   ProgramStateRef state = C.getState();
   if (dyn_cast<CXXConstructorDecl>(D)) {
     unsigned constructorflag = state->get<ConstructorFlag>();
-    state = state->set<ConstructorFlag>(constructorflag--);
+    state = state->set<ConstructorFlag>(--constructorflag);
     C.addTransition(state);
     return;
   }
 
   if (dyn_cast<CXXDestructorDecl>(D)) {
     unsigned destructorflag = state->get<DestructorFlag>();
-    state = state->set<DestructorFlag>(destructorflag--);
+    state = state->set<DestructorFlag>(--destructorflag);
     C.addTransition(state);
     return;
   }
