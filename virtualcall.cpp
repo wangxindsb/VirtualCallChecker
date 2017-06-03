@@ -32,7 +32,7 @@ A::A() {
 
 A::A(int i) {
   foo(); // From Sema: expected-warning {{call to pure virtual member function 'foo' has undefined behavior}}
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction will not dispatch to derived class
 }
 
 B::~B() {
@@ -53,7 +53,7 @@ public:
 
 C::C() {
   f(foo());
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction will not dispatch to derived class
 }
 
 class D : public B {
@@ -111,10 +111,10 @@ public:
     g.bar();
       // no warning
     f();
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction will not dispatch to derived class
     H& h = *this;
     h.f();
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction will not dispatch to derived class
   }
 };
 
@@ -130,7 +130,7 @@ public:
       // no warning
     }
     g();
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction will not dispatch to derived class
   }
   virtual void g();
 };

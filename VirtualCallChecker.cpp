@@ -96,7 +96,8 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   // GDM of constructor and destructor. 
   if (isVirtualCall(CE) && state->get<ConstructorFlag>() > 0) {
     if (!BT_CT) {
-      BT_CT.reset(new BugType(this, "Virtual call in constructor", "not pure"));
+      BT_CT.reset(new BugType(this, "Call to virtual function during construction", 
+                  "not pure"));
     }
     ExplodedNode *N = C.generateNonFatalErrorNode();
     auto Reporter = llvm::make_unique<BugReport>(*BT_CT, BT_CT->getName(), N);
@@ -107,7 +108,8 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
 
   if (isVirtualCall(CE) && state->get<DestructorFlag>() > 0) {
     if (!BT_DT) {
-      BT_DT.reset(new BugType(this, "Virtual call in destructor", "not pure"));
+      BT_DT.reset(new BugType(this, "Call to virtual function during destruction", 
+                  "not pure"));
     }
     ExplodedNode *N = C.generateNonFatalErrorNode();
     auto Reporter = llvm::make_unique<BugReport>(*BT_DT, BT_DT->getName(), N);
