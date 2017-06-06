@@ -9,7 +9,7 @@ public:
   virtual void bar();
   void f() {
     foo();
-        // expected-warning:Call to virtual function during construction will not dispatch to derived class
+        // expected-warning:Call to virtual function during construction
   }
 };
 
@@ -17,13 +17,13 @@ class B : public A {
 public:
   B() {
     foo();
-        // expected-warning:Call to virtual function during construction will not dispatch to derived class
+        // expected-warning:Call to virtual function during construction
   }
   ~B();
   
   virtual int foo();
   virtual void bar() { foo(); }
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during destruction
 };
 
 A::A() {
@@ -32,14 +32,14 @@ A::A() {
 
 A::A(int i) {
   foo(); // From Sema: expected-warning {{call to pure virtual member function 'foo' has undefined behavior}}
-      // expected-warning:Call to virtual function during construction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction
 }
 
 B::~B() {
   this->B::foo(); // no-warning
   this->B::bar();
   this->foo();
-      // expected-warning:Call to virtual function during destruction will not dispatch to derived class
+      // expected-warning:Call to virtual function during destruction
 }
 
 class C : public B {
@@ -53,7 +53,7 @@ public:
 
 C::C() {
   f(foo());
-      // expected-warning:Call to virtual function during construction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction
 }
 
 class D : public B {
@@ -75,7 +75,6 @@ public:
   int foo() override;
 };
 
-// Regression test: don't crash when there's no direct callee.
 class F {
 public:
   F() {
@@ -111,10 +110,10 @@ public:
     g.bar();
       // no warning
     f();
-      // expected-warning:Call to virtual function during construction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction
     H& h = *this;
     h.f();
-      // expected-warning:Call to virtual function during construction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction
   }
 };
 
@@ -130,7 +129,7 @@ public:
       // no warning
     }
     g();
-      // expected-warning:Call to virtual function during construction will not dispatch to derived class
+      // expected-warning:Call to virtual function during construction
   }
   virtual void g();
 };
@@ -149,9 +148,3 @@ int main() {
   X x;
   X x1(1);
 }
-
-#include "virtualcall.h"
-
-#define AS_SYSTEM
-#include "virtualcall.h"
-#undef AS_SYSTEM
