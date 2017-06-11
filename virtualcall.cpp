@@ -97,7 +97,7 @@ class H{
 public:
   H() : initState(0) { init(); }
   int initState;
-  virtual void f();
+  virtual void f() const;
   void init() {
     if (initState)
       f();
@@ -121,6 +121,7 @@ class X {
 public:
   X() {
     g();
+      // expected-warning:Call to virtual function during construction
   }
   X(int i) {
     if (i > 0) {
