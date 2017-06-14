@@ -211,6 +211,8 @@ bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
   return false;
 }
 
+// Get the symbolic value of the "this" object for a method call that created the given stack frame. 
+// Returns None if the stack frame does not represent a method call.
 Optional<SVal>
 VirtualCallChecker::getThisSVal(const StackFrameContext *SFC,const ProgramStateRef state) const {
   if (SFC->inTopFrame()) {

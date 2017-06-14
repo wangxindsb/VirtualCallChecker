@@ -90,12 +90,16 @@ bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
   return false;
 }
 
+// If the function is called during a ctor, return 1,
+// else if it is called during a dtor, return 2, else return 0.
 int VirtualCallChecker::isCtorDtor(const LocationContext *LCt,
                                    const CallExpr *CE, ProgramStateRef state) const {
+  // The flag for object. If the function is called by an object, increase the flag. 
   int flag = 0;
   const StackFrameContext *SFC = LCt->getCurrentStackFrame();
   Optional<SVal> ThisSVal = getThisSVal(SFC,state);
 
+  // The situation where a function is directly called by an object
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
     if (Expr *base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(base)) {
@@ -105,6 +109,8 @@ int VirtualCallChecker::isCtorDtor(const LocationContext *LCt,
     }     
   }
 
+  // The situation where a function is not directly called by an object
+  // Use the stackframe to get the object which calls the function
   for (const LocationContext *LCtx = LCt; LCtx; LCtx = LCtx->getParent()) {
     if(const CXXMethodDecl *MD =
         dyn_cast_or_null<CXXMethodDecl>(LCtx->getDecl())){
@@ -127,6 +133,8 @@ int VirtualCallChecker::isCtorDtor(const LocationContext *LCt,
   return 0;
 }
 
+// Get the symbolic value of the "this" object for a method call that created the given stack frame. 
+// Returns None if the stack frame does not represent a method call.
 Optional<SVal>
 VirtualCallChecker::getThisSVal(const StackFrameContext *SFC,const ProgramStateRef state) const {
   if (SFC->inTopFrame()) {

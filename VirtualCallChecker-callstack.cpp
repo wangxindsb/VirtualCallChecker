@@ -170,11 +170,13 @@ bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
   return false;
 }   
 
+// Check if the function is called by an object
 bool VirtualCallChecker::isObject(const LocationContext *LCt,
                                   const CallExpr *CE, ProgramStateRef state) const {
   const StackFrameContext *SFC = LCt->getCurrentStackFrame();
   Optional<SVal> ThisSVal = getThisSVal(SFC,state);
 
+  // The situation where a function is directly called by an object
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
     if (Expr *base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(base)) {
@@ -183,7 +185,8 @@ bool VirtualCallChecker::isObject(const LocationContext *LCt,
       }
     }     
   }
-
+  // The situation where a function is not directly called by an object
+  // Use the stackframe to get the object which calls the function
   for (const LocationContext *LCtx = LCt; LCtx; LCtx = LCtx->getParent()) {
     const Stmt *CallSite = LCtx->getCurrentStackFrame()->getCallSite();
     if (const CallExpr *CE = dyn_cast_or_null<CallExpr>(CallSite)) {
@@ -204,6 +207,9 @@ bool VirtualCallChecker::isObject(const LocationContext *LCt,
   return false;
 }
 
+
+// Get the symbolic value of the "this" object for a method call that created the given stack frame. 
+// Returns None if the stack frame does not represent a method call.
 Optional<SVal>
 VirtualCallChecker::getThisSVal(const StackFrameContext *SFC,const ProgramStateRef state) const {
   if (SFC->inTopFrame()) {
