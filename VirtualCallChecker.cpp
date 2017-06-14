@@ -12,7 +12,6 @@ using namespace ento;
 
 namespace {
 class VirtualCallChecker: public Checker<check::PreCall, check::PostCall> {
-  bool isVirtualCall(const CallExpr *CE) const;
   mutable std::unique_ptr<BugType> BT_CT;
   mutable std::unique_ptr<BugType> BT_DT;
 
@@ -21,8 +20,10 @@ public:
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
 
 private:
+  bool isVirtualCall(const CallExpr *CE) const;
   class VirtualBugVisitor : public BugReporterVisitorImpl<VirtualBugVisitor> {
   public:
+    VirtualBugVisitor() : Found(false) {}
     void Profile(llvm::FoldingSetNodeID &ID) const override{
       static int x = 0;
       ID.AddPointer(&x);
@@ -31,6 +32,8 @@ private:
                                                    const ExplodedNode *PrevN,
                                                    BugReporterContext &BRC,
                                                    BugReport &BR) override;
+  private:
+    bool Found;
   };
 };
 }
@@ -47,21 +50,36 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
                                                  BugReport &BR) {
   // We need the last ctor/dtor which call the virtual function
   // The visitor walks the ExplodedGraph backwards.
-  ProgramStateRef State = N->getState();
-  ProgramStateRef StatePrev = PrevN->getState();
-  const unsigned ctorflag = State->get<ConstructorFlag>();
-  const unsigned ctorflagPrev = StatePrev->get<ConstructorFlag>();
-  if (ctorflag == ctorflagPrev)
-    return nullptr; 
+  if (Found)
+    return nullptr;
+
+  const LocationContext* LCtx = N->getLocationContext();
+  const CXXConstructorDecl *CD =
+        dyn_cast<CXXConstructorDecl>(LCtx->getDecl());
+  const CXXDestructorDecl *DD =
+        dyn_cast<CXXDestructorDecl>(LCtx->getDecl());  
+  if(!CD && !DD) return nullptr;
   
   const Stmt *S = PathDiagnosticLocation::getStmt(N); 
   if (!S)
     return nullptr;
+  Found = true;
+
+  std::string DeclName;
+  std::string InfoText;
+  if(CD) {
+    DeclName = CD->getNameAsString();
+    InfoText = "Called from this constrctor " + DeclName;
+  }
+  else {
+    DeclName = DD->getNameAsString();
+    InfoText = "called from this destructor " + DeclName;
+  }
 
   // Generate the extra diagnostic.
   PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
                              N->getLocationContext());
-  return std::make_shared<PathDiagnosticEventPiece>(Pos, "called here");
+  return std::make_shared<PathDiagnosticEventPiece>(Pos, InfoText, true);
 }
 
   
@@ -113,6 +131,7 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     }
     ExplodedNode *N = C.generateNonFatalErrorNode();
     auto Reporter = llvm::make_unique<BugReport>(*BT_DT, BT_DT->getName(), N);
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>());
     C.emitReport(std::move(Reporter));
     return;
   }

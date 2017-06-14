@@ -86,10 +86,8 @@ public:
 
 class G {
 public:
-  G(){foo();}
   virtual void bar();
   void foo() {
-    F s;
     bar();
       // no warning
   }
