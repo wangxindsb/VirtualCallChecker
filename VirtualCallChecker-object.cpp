@@ -24,10 +24,15 @@ private:
   bool isVirtualCall(const CallExpr *CE) const;
   Optional<SVal> getThisSVal(const StackFrameContext *SFC,const ProgramStateRef State) const;
   class VirtualBugVisitor : public BugReporterVisitorImpl<VirtualBugVisitor> {
+  private:
+    const unsigned Flag;
+    bool Found;
   public:
+    VirtualBugVisitor(const unsigned Flag) : Flag(Flag), Found(false) {}
     void Profile(llvm::FoldingSetNodeID &ID) const override{
       static int x = 0;
       ID.AddPointer(&x);
+      ID.AddPointer(&Flag);
     }
     std::shared_ptr<PathDiagnosticPiece> VisitNode(const ExplodedNode *N,
                                                    const ExplodedNode *PrevN,
@@ -50,24 +55,41 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
                                                  BugReport &BR) {
   // We need the last ctor/dtor which call the virtual function
   // The visitor walks the ExplodedGraph backwards.
-  ProgramStateRef State = N->getState();
-  ProgramStateRef StatePrev = PrevN->getState();
-  const unsigned ctorflag = State->get<ConstructorFlag>();
-  const unsigned ctorflagPrev = StatePrev->get<ConstructorFlag>();
-
-  if (ctorflag <= ctorflagPrev)
+  if (Found)
     return nullptr;
-    
+
+  ProgramStateRef state = N->getState();
+  const unsigned ctorflag = state->get<ConstructorFlag>();
+  const unsigned dtorflag = state->get<DestructorFlag>();
+  const LocationContext* LCtx = N->getLocationContext();
+  const CXXConstructorDecl *CD =
+        dyn_cast<CXXConstructorDecl>(LCtx->getDecl());
+  const CXXDestructorDecl *DD =
+        dyn_cast<CXXDestructorDecl>(LCtx->getDecl());  
+  if((!CD && !DD) || (ctorflag!=Flag && dtorflag!=Flag)) return nullptr;
+  
   const Stmt *S = PathDiagnosticLocation::getStmt(N); 
   if (!S)
     return nullptr;
-    // Generate the extra diagnostic
+  Found = true;
+
+  std::string DeclName;
+  std::string InfoText;
+  if(CD) {
+    DeclName = CD->getNameAsString();
+    InfoText = "Called from this constrctor " + DeclName;
+  }
+  else {
+    DeclName = DD->getNameAsString();
+    InfoText = "called from this destructor " + DeclName;
+  }
+
+  // Generate the extra diagnostic.
   PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
                              N->getLocationContext());
-  return std::make_shared<PathDiagnosticEventPiece>(Pos, "called here");
+  return std::make_shared<PathDiagnosticEventPiece>(Pos, InfoText, true);
 }
 
-  
 void VirtualCallChecker::checkPreCall(const CallEvent &Call, 
                                       CheckerContext &C) const {
 
@@ -76,6 +98,8 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     return;
 
   ProgramStateRef state = C.getState();
+  const unsigned ctorflag = state->get<ConstructorFlag>();
+  const unsigned dtorflag = state->get<DestructorFlag>();
   const CallExpr *CE = dyn_cast_or_null<CallExpr>(Call.getOriginExpr());
   const LocationContext *LCtx = C.getLocationContext();
   const StackFrameContext *SFC = LCtx->getCurrentStackFrame();
@@ -114,27 +138,26 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
 
   // First Check if a virtual method is called, then check the 
   // GDM of constructor and destructor. 
-  if (isVirtualCall(CE) && state->get<ConstructorFlag>() > 0 
-      && state->get<ObjectFlag>() == 0) {
+  if (isVirtualCall(CE) && ctorflag > 0 && state->get<ObjectFlag>() == 0) {
     if (!BT_CT) {
       BT_CT.reset(new BugType(this, "Call to virtual function during construction", 
                   "not pure"));
     }
     ExplodedNode *N = C.generateNonFatalErrorNode();
     auto Reporter = llvm::make_unique<BugReport>(*BT_CT, BT_CT->getName(), N);
-    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>());
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(ctorflag));
     C.emitReport(std::move(Reporter));
     return;
   }
 
-  if (isVirtualCall(CE) && state->get<DestructorFlag>() > 0 
-      && state->get<ObjectFlag>() == 0) {
+  if (isVirtualCall(CE) && dtorflag > 0 && state->get<ObjectFlag>() == 0) {
     if (!BT_DT) {
       BT_DT.reset(new BugType(this, "Call to virtual function during destruction", 
                   "not pure"));
     }
     ExplodedNode *N = C.generateNonFatalErrorNode();
     auto Reporter = llvm::make_unique<BugReport>(*BT_DT, BT_DT->getName(), N);
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(dtorflag));
     C.emitReport(std::move(Reporter));
     return;
   }
@@ -211,8 +234,6 @@ bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
   return false;
 }
 
-// Get the symbolic value of the "this" object for a method call that created the given stack frame. 
-// Returns None if the stack frame does not represent a method call.
 Optional<SVal>
 VirtualCallChecker::getThisSVal(const StackFrameContext *SFC,const ProgramStateRef state) const {
   if (SFC->inTopFrame()) {
