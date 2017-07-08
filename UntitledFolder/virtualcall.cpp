@@ -1,15 +1,12 @@
-// RUN: %clang_analyze_cc1 -analyzer-checker=optin.cplusplus.VirtualCall -analyzer-store region -verify -std=c++11 %s
-
-// RUN: %clang_analyze_cc1 -analyzer-checker=optin.cplusplus.VirtualCall -analyzer-store region -analyzer-config optin.cplusplus.VirtualCall:PureOnly=true -DPUREONLY=1 -verify -std=c++11 %s
-
 class A {
 public:
   A();
+  A(int i);
 
   ~A() {};
   
-  virtual int foo()=0;
-  virtual void bar()=0;
+  virtual int foo(); // from Sema: expected-note {{'foo' declared here}}
+  virtual void bar();
   void f() {
     foo();
         // expected-warning:Call to virtual function during construction
@@ -31,6 +28,11 @@ public:
 
 A::A() {
   f();
+}
+
+A::A(int i) {
+  foo(); // From Sema: expected-warning {{call to pure virtual member function 'foo' has undefined behavior}}
+      // expected-warning:Call to virtual function during construction
 }
 
 B::~B() {
@@ -61,8 +63,7 @@ public:
   }
   ~D() { bar(); }
   int foo() final;
-  void bar() final { foo(); } 
-  // no-warning
+  void bar() final { foo(); } // no-warning
 };
 
 class E final : public B {
@@ -134,6 +135,24 @@ public:
   virtual void g();
 };
 
+class P {
+public:
+  P() {
+    foobar();
+    // expected-warning:Call to virtual function during construction
+    #if PUREONLY
+    // expected-warning:Call to pure virtual function during construction
+    #endif
+  };
+  virtual int foobar()=0;
+};
+
+class Q : public P {
+public:
+  Q() {}
+  virtual int foobar();
+};
+
 class M;
 class N {
 public:
@@ -144,18 +163,18 @@ class M {
 public:
   M() {
     N n;
-    n.virtualMethod(); 
-    // no warning
+    n.virtualMethod(); // this virtual call is ok
     n.callFooOfM(this);
   }
   virtual void foo();
 };
 void N::callFooOfM(M* m) {
-    m->foo(); 
-    // expected-warning:Call to virtual function during construction
+   m->foo(); // Would be good to warn here.
 }
 
 int main() {
+  A a;
+  A a1(1);
   B b;
   C c;
   D d;
@@ -166,5 +185,6 @@ int main() {
   H h1(1);
   X x;
   X x1(1);
+  Q q;
   M m;
 }

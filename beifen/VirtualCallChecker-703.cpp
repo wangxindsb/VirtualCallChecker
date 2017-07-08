@@ -27,26 +27,23 @@ using namespace ento;
 
 namespace {
 
-class VirtualCallChecker
-    : public Checker<check::BeginFunction, check::EndFunction, check::PreCall,
-                     check::PostCall> {
-  mutable std::unique_ptr<BugType> BT;
+class VirtualCallChecker : public Checker<check::PreCall, check::PostCall> {
+  mutable std::unique_ptr<BugType> BT_virtual_ctor;
+  mutable std::unique_ptr<BugType> BT_virtual_dtor;
 
 public:
   // The flag to determine if pure virtual functions should be issued only.
   DefaultBool IsPureOnly;
 
-  void checkBeginFunction(CheckerContext &C) const;
-  void checkEndFunction(CheckerContext &C) const;
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
-  bool IsCalledbyCtor(const CallExpr *CE, ProgramStateRef State,
+  bool IsCalledbyCtor(const CallExpr *CE, ProgramStateRef state,
                       const LocationContext *LCtx) const;
-  bool IsCalledbyDtor(const CallExpr *CE, ProgramStateRef State,
+  bool IsCalledbyDtor(const CallExpr *CE, ProgramStateRef state,
                       const LocationContext *LCtx) const;
 
 private:
-  bool IsVirtualCall(const CallExpr *CE) const;
+  bool isVirtualCall(const CallExpr *CE) const;
   Optional<SVal> getThisSVal(const StackFrameContext *SFC,
                              const ProgramStateRef State) const;
 
@@ -125,57 +122,9 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
   return std::make_shared<PathDiagnosticEventPiece>(Pos, InfoText, true);
 }
 
-void VirtualCallChecker::checkBeginFunction(CheckerContext &C) const {
-  const auto *LCtx = C.getLocationContext();
-  const auto *MD = dyn_cast<CXXMethodDecl>(LCtx->getDecl());
-  if (!MD)
-    return;
-
-  ProgramStateRef State = C.getState();
-
-  // Enter a constructor, increase the corresponding integer
-  if (isa<CXXConstructorDecl>(MD)) {
-    unsigned Constructorflag = State->get<ConstructorFlag>();
-    State = State->set<ConstructorFlag>(++Constructorflag);
-    C.addTransition(State);
-    return;
-  }
-
-  // Enter a Destructor, increase the corresponding integer
-  if (isa<CXXDestructorDecl>(MD)) {
-    unsigned Destructorflag = State->get<DestructorFlag>();
-    State = State->set<DestructorFlag>(++Destructorflag);
-    C.addTransition(State);
-    return;
-  }
-}
-
-// The PostCall callback, when leave a constructor or a destructor,
-// decrease the corresponding integer
-void VirtualCallChecker::checkEndFunction(CheckerContext &C) const {
-  const auto *LCtx = C.getLocationContext();
-  const auto *MD = dyn_cast<CXXMethodDecl>(LCtx->getDecl());
-  if (!MD)
-    return;
-
-  ProgramStateRef State = C.getState();
-  if (isa<CXXConstructorDecl>(MD)) {
-    unsigned Constructorflag = State->get<ConstructorFlag>();
-    State = State->set<ConstructorFlag>(--Constructorflag);
-    C.addTransition(State);
-    return;
-  }
-
-  if (isa<CXXDestructorDecl>(MD)) {
-    unsigned Destructorflag = State->get<DestructorFlag>();
-    State = State->set<DestructorFlag>(--Destructorflag);
-    C.addTransition(State);
-    return;
-  }
-}
-
 void VirtualCallChecker::checkPreCall(const CallEvent &Call,
                                       CheckerContext &C) const {
+
   const Decl *D = Call.getDecl();
   if (!D)
     return;
@@ -189,24 +138,30 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   const StackFrameContext *SFC = LCtx->getCurrentStackFrame();
 
   Optional<SVal> ThisSVal = getThisSVal(SFC, State);
-  const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D);
+  const CXXMethodDecl *MD = dyn_cast_or_null<CXXMethodDecl>(D);
 
   // Enter a constructor, increase the corresponding integer.
   if (isa<CXXConstructorDecl>(D)) {
+    unsigned Constructorflag = State->get<ConstructorFlag>();
+    State = State->set<ConstructorFlag>(++Constructorflag);
+    C.addTransition(State);
     if (!CC)
       return;
-    const MemRegion *Reg = CC->getCXXThisVal().getAsRegion();
-    State = State->set<CtorMap>(Reg, 1);
+    const MemRegion *reg = CC->getCXXThisVal().getAsRegion();
+    State = State->set<CtorMap>(reg, 1);
     C.addTransition(State);
     return;
   }
 
   // Enter a Destructor, increase the corresponding integer.
   if (isa<CXXDestructorDecl>(D)) {
+    unsigned Destructorflag = State->get<DestructorFlag>();
+    State = State->set<DestructorFlag>(++Destructorflag);
+    C.addTransition(State);
     if (!CD)
       return;
-    const MemRegion *Reg = CD->getCXXThisVal().getAsRegion();
-    State = State->set<DtorMap>(Reg, 1);
+    const MemRegion *reg = CD->getCXXThisVal().getAsRegion();
+    State = State->set<DtorMap>(reg, 1);
     C.addTransition(State);
     return;
   }
@@ -215,12 +170,12 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
     // The member access is fully qualified (i.e., X::F).
     // Treat this as a non-virtual call and do not warn.
-    if (const Expr *Base = CME->getBase()->IgnoreImpCasts()) {
+    if (Expr *Base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(Base)) {
         SVal CEV = State->getSVal(Base, LCtx);
         if (CEV != ThisSVal) {
-          unsigned Objectflag = State->get<ObjectFlag>();
-          State = State->set<ObjectFlag>(++Objectflag);
+          unsigned objectflag = State->get<ObjectFlag>();
+          State = State->set<ObjectFlag>(++objectflag);
           C.addTransition(State);
         }
       }
@@ -232,69 +187,53 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   if (IsPureOnly && !MD->isPure())
     return;
 
-  if (IsVirtualCall(CE) && State->get<ConstructorFlag>() > 0 &&
+  if (isVirtualCall(CE) && State->get<ConstructorFlag>() > 0 &&
       (State->get<ObjectFlag>() == 0 ||
        (State->get<ObjectFlag>() > 0 && IsCalledbyCtor(CE, State, LCtx)))) {
-    if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!N)
-        return;
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to pure function during construction", N);
-
-      const unsigned Ctorflag = State->get<ConstructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
-      C.emitReport(std::move(Reporter));
-      return;
-    } else {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to virtual function during construction", N);
-      const unsigned Ctorflag = State->get<ConstructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
-      C.emitReport(std::move(Reporter));
-      return;
+    if (!BT_virtual_ctor) {
+      if (IsPureOnly && MD->isPure()) {
+        BT_virtual_ctor.reset(new BugType(
+            this, "Call to pure function during construction", "pure only"));
+      } else {
+        BT_virtual_ctor.reset(new BugType(
+            this, "Call to virtual function during construction", "not pure"));
+      }
     }
+    ExplodedNode *N = C.generateNonFatalErrorNode();
+    auto Reporter = llvm::make_unique<BugReport>(*BT_virtual_ctor,
+                                                 BT_virtual_ctor->getName(), N);
+    const unsigned Ctorflag = State->get<ConstructorFlag>();
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
+    C.emitReport(std::move(Reporter));
+    return;
   }
 
-  if (IsVirtualCall(CE) && State->get<DestructorFlag>() > 0 &&
+  if (isVirtualCall(CE) && State->get<DestructorFlag>() > 0 &&
       (State->get<ObjectFlag>() == 0 ||
        (State->get<ObjectFlag>() > 0 && IsCalledbyDtor(CE, State, LCtx)))) {
-    if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateErrorNode();
-      if (!N)
-        return;
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to pure function during destruction", N);
-      const unsigned Dtorflag = State->get<DestructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Dtorflag));
-      C.emitReport(std::move(Reporter));
-      return;
-    } else {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to virtual function during destruction", N);
-      const unsigned Dtorflag = State->get<DestructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Dtorflag));
-      C.emitReport(std::move(Reporter));
-      return;
+    if (!BT_virtual_dtor) {
+      if (IsPureOnly && MD->isPure()) {
+        BT_virtual_dtor.reset(new BugType(
+            this, "Call to pure function during destruction", "pure only"));
+      } else {
+        BT_virtual_dtor.reset(new BugType(
+            this, "Call to virtual function during destruction", "not pure"));
+      }
     }
+    ExplodedNode *N = C.generateNonFatalErrorNode();
+    auto Reporter = llvm::make_unique<BugReport>(*BT_virtual_dtor,
+                                                 BT_virtual_dtor->getName(), N);
+    const unsigned Dtorflag = State->get<DestructorFlag>();
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Dtorflag));
+    C.emitReport(std::move(Reporter));
+    return;
   }
 }
 
 // When leave a constructor or a destructor,decrease the corresponding integer.
 void VirtualCallChecker::checkPostCall(const CallEvent &Call,
                                        CheckerContext &C) const {
+
   const Decl *D = Call.getDecl();
   if (!D)
     return;
@@ -310,21 +249,27 @@ void VirtualCallChecker::checkPostCall(const CallEvent &Call,
   Optional<SVal> ThisSVal = getThisSVal(SFC, State);
 
   if (isa<CXXConstructorDecl>(D)) {
-    const MemRegion *Reg = CC->getCXXThisVal().getAsRegion();
-    State = State->remove<CtorMap>(Reg);
+    unsigned Constructorflag = State->get<ConstructorFlag>();
+    State = State->set<ConstructorFlag>(--Constructorflag);
+    C.addTransition(State);
+    const MemRegion *reg = CC->getCXXThisVal().getAsRegion();
+    State = State->remove<CtorMap>(reg);
     C.addTransition(State);
     return;
   }
 
   if (isa<CXXDestructorDecl>(D)) {
-    const MemRegion *Reg = CD->getCXXThisVal().getAsRegion();
-    State = State->remove<DtorMap>(Reg);
+    unsigned Destructorflag = State->get<DestructorFlag>();
+    State = State->set<DestructorFlag>(--Destructorflag);
+    C.addTransition(State);
+    const MemRegion *reg = CD->getCXXThisVal().getAsRegion();
+    State = State->remove<DtorMap>(reg);
     C.addTransition(State);
     return;
   }
 
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
-    if (const Expr *Base = CME->getBase()->IgnoreImpCasts()) {
+    if (Expr *Base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(Base)) {
         SVal CEV = State->getSVal(Base, LCtx);
         if (CEV != ThisSVal) {
@@ -338,7 +283,7 @@ void VirtualCallChecker::checkPostCall(const CallEvent &Call,
 }
 
 // The function to check if a callexpr is a virtual function.
-bool VirtualCallChecker::IsVirtualCall(const CallExpr *CE) const {
+bool VirtualCallChecker::isVirtualCall(const CallExpr *CE) const {
   bool CallIsNonVirtual = false;
 
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
@@ -394,15 +339,15 @@ bool VirtualCallChecker::IsCalledbyCtor(const CallExpr *CE,
                                         ProgramStateRef State,
                                         const LocationContext *LCtx) const {
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
-    if (const Expr *Base = CME->getBase()->IgnoreImpCasts()) {
+    if (Expr *Base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(Base)) {
         SVal CEV = State->getSVal(Base, LCtx);
-        CtorMapTy Regmap = State->get<CtorMap>();
-        for (CtorMapTy::iterator I = Regmap.begin(), E = Regmap.end(); I != E;
+        CtorMapTy regmap = State->get<CtorMap>();
+        for (CtorMapTy::iterator I = regmap.begin(), E = regmap.end(); I != E;
              ++I) {
-          const MemRegion *Curreg = I->first;
-          SVal CurSV = State->getSVal(Curreg);
-          if (CEV == CurSV)
+          const MemRegion *curreg = I->first;
+          SVal curSV = State->getSVal(curreg);
+          if (CEV == curSV)
             return true;
         }
       }
@@ -416,15 +361,15 @@ bool VirtualCallChecker::IsCalledbyDtor(const CallExpr *CE,
                                         ProgramStateRef State,
                                         const LocationContext *LCtx) const {
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
-    if (const Expr *Base = CME->getBase()->IgnoreImpCasts()) {
+    if (Expr *Base = CME->getBase()->IgnoreImpCasts()) {
       if (!isa<CXXThisExpr>(Base)) {
         SVal CEV = State->getSVal(Base, LCtx);
-        DtorMapTy Regmap = State->get<CtorMap>();
-        for (DtorMapTy::iterator I = Regmap.begin(), E = Regmap.end(); I != E;
+        DtorMapTy regmap = State->get<CtorMap>();
+        for (DtorMapTy::iterator I = regmap.begin(), E = regmap.end(); I != E;
              ++I) {
-          const MemRegion *Curreg = I->first;
-          SVal CurSV = State->getSVal(Curreg);
-          if (CEV == CurSV)
+          const MemRegion *curreg = I->first;
+          SVal curSV = State->getSVal(curreg);
+          if (CEV == curSV)
             return true;
         }
       }

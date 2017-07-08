@@ -30,7 +30,8 @@ namespace {
 class VirtualCallChecker
     : public Checker<check::BeginFunction, check::EndFunction, check::PreCall,
                      check::PostCall> {
-  mutable std::unique_ptr<BugType> BT;
+  mutable std::unique_ptr<BugType> BT_virtual_ctor;
+  mutable std::unique_ptr<BugType> BT_virtual_dtor;
 
 public:
   // The flag to determine if pure virtual functions should be issued only.
@@ -235,60 +236,43 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
   if (IsVirtualCall(CE) && State->get<ConstructorFlag>() > 0 &&
       (State->get<ObjectFlag>() == 0 ||
        (State->get<ObjectFlag>() > 0 && IsCalledbyCtor(CE, State, LCtx)))) {
-    if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!N)
-        return;
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to pure function during construction", N);
-
-      const unsigned Ctorflag = State->get<ConstructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
-      C.emitReport(std::move(Reporter));
-      return;
-    } else {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to virtual function during construction", N);
-      const unsigned Ctorflag = State->get<ConstructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
-      C.emitReport(std::move(Reporter));
-      return;
+    if (!BT_virtual_ctor) {
+      if (IsPureOnly && MD->isPure()) {
+        BT_virtual_ctor.reset(new BugType(
+            this, "Call to pure function during construction", "pure only"));
+      } else {
+        BT_virtual_ctor.reset(new BugType(
+            this, "Call to virtual function during construction", "not pure"));
+      }
     }
+    ExplodedNode *N = C.generateNonFatalErrorNode();
+    auto Reporter = llvm::make_unique<BugReport>(*BT_virtual_ctor,
+                                                 BT_virtual_ctor->getName(), N);
+    const unsigned Ctorflag = State->get<ConstructorFlag>();
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
+    C.emitReport(std::move(Reporter));
+    return;
   }
 
   if (IsVirtualCall(CE) && State->get<DestructorFlag>() > 0 &&
       (State->get<ObjectFlag>() == 0 ||
        (State->get<ObjectFlag>() > 0 && IsCalledbyDtor(CE, State, LCtx)))) {
-    if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateErrorNode();
-      if (!N)
-        return;
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to pure function during destruction", N);
-      const unsigned Dtorflag = State->get<DestructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Dtorflag));
-      C.emitReport(std::move(Reporter));
-      return;
-    } else {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to virtual function during destruction", N);
-      const unsigned Dtorflag = State->get<DestructorFlag>();
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Dtorflag));
-      C.emitReport(std::move(Reporter));
-      return;
+    if (!BT_virtual_dtor) {
+      if (IsPureOnly && MD->isPure()) {
+        BT_virtual_dtor.reset(new BugType(
+            this, "Call to pure function during destruction", "pure only"));
+      } else {
+        BT_virtual_dtor.reset(new BugType(
+            this, "Call to virtual function during destruction", "not pure"));
+      }
     }
+    ExplodedNode *N = C.generateNonFatalErrorNode();
+    auto Reporter = llvm::make_unique<BugReport>(*BT_virtual_dtor,
+                                                 BT_virtual_dtor->getName(), N);
+    const unsigned Dtorflag = State->get<DestructorFlag>();
+    Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Dtorflag));
+    C.emitReport(std::move(Reporter));
+    return;
   }
 }
 

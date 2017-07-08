@@ -1,0 +1,165 @@
+./build/bin/clang -cc1 -analyze -analyzer-checker=optin.cplusplus.VirtualCall -std=c++11 -analyzer-output=text clang-GSoC/VirtualCallChecker/virtualcall.cpp
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:11:5: warning: Call to virtual function during construction
+    foo();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:143:5: note: Calling default constructor for 'B'
+  B b;
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:18:3: note: Calling default constructor for 'A'
+  B() {
+  ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:30:3: note: called from A()
+  f();
+  ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:30:3: note: Calling 'A::f'
+  f();
+  ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:11:5: note: Call to virtual function during construction
+    foo();
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:19:5: warning: Call to virtual function during construction
+    foo();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:143:5: note: Calling default constructor for 'B'
+  B b;
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:19:5: note: called from B()
+    foo();
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:19:5: note: Call to virtual function during construction
+    foo();
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:25:24: warning: Call to virtual function during destruction
+  virtual void bar() { foo(); }
+                       ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:153:1: note: Calling '~E'
+}
+^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:74:10: note: called from ~E()
+  ~E() { bar(); }
+         ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:74:10: note: Calling 'B::bar'
+  ~E() { bar(); }
+         ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:25:24: note: Call to virtual function during destruction
+  virtual void bar() { foo(); }
+                       ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:34:3: warning: Call to virtual function during construction
+  foo(); // From Sema: expected-warning {{call to pure virtual member function 'foo' has undefined behavior}}
+  ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:142:5: note: Calling constructor for 'A'
+  A a1(1);
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:34:3: note: called from A()
+  foo(); // From Sema: expected-warning {{call to pure virtual member function 'foo' has undefined behavior}}
+  ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:34:3: note: Call to virtual function during construction
+  foo(); // From Sema: expected-warning {{call to pure virtual member function 'foo' has undefined behavior}}
+  ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:41:3: warning: Call to virtual function during destruction
+  this->foo();
+  ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:153:1: note: Calling '~E'
+}
+^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:74:17: note: Calling '~B'
+  ~E() { bar(); }
+                ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:41:3: note: called from ~B()
+  this->foo();
+  ^~~~~~~~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:41:3: note: Call to virtual function during destruction
+  this->foo();
+  ^~~~~~~~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:55:5: warning: Call to virtual function during construction
+  f(foo());
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:144:5: note: Calling default constructor for 'C'
+  C c;
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:55:5: note: called from C()
+  f(foo());
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:55:5: note: Call to virtual function during construction
+  f(foo());
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:93:5: warning: Call to virtual function during construction
+    bar();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:148:5: note: Calling default constructor for 'G'
+  G g;
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:89:8: note: Calling 'G::foo'
+  G() {foo();}
+       ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:92:7: note: Calling default constructor for 'F'
+    F s;
+      ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:80:7: note: called from F()
+  F() {
+      ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:92:7: note: Returning from default constructor for 'F'
+    F s;
+      ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:93:5: note: Call to virtual function during construction
+    bar();
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:114:5: warning: Call to virtual function during construction
+    f();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:150:5: note: Calling constructor for 'H'
+  H h1(1);
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:114:5: note: called from H()
+    f();
+    ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:114:5: note: Call to virtual function during construction
+    f();
+    ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:117:5: warning: Call to virtual function during construction
+    h.f();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:150:5: note: Calling constructor for 'H'
+  H h1(1);
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:117:5: note: called from H()
+    h.f();
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:117:5: note: Call to virtual function during construction
+    h.f();
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:125:5: warning: Call to virtual function during construction
+    g();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:151:5: note: Calling default constructor for 'X'
+  X x;
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:125:5: note: called from X()
+    g();
+    ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:125:5: note: Call to virtual function during construction
+    g();
+    ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:134:5: warning: Call to virtual function during construction
+    g();
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:152:5: note: Calling constructor for 'X'
+  X x1(1);
+    ^~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:129:5: note: Taking true branch
+    if (i > 0) {
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:130:9: note: Calling constructor for 'X'
+      X x(i-1);
+        ^~~~~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:129:5: note: Taking false branch
+    if (i > 0) {
+    ^
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:134:5: note: called from X()
+    g();
+    ^~~
+clang-GSoC/VirtualCallChecker/virtualcall.cpp:134:5: note: Call to virtual function during construction
+    g();
+    ^~~
+11 warnings generated.
+
