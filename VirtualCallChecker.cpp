@@ -236,14 +236,14 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
       (State->get<ObjectFlag>() == 0 ||
        (State->get<ObjectFlag>() > 0 && IsCalledbyCtor(CE, State, LCtx)))) {
     if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
+      ExplodedNode *N = C.generateErrorNode();
       if (!N)
         return;
       if (!BT)
         BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
+
       auto Reporter = llvm::make_unique<BugReport>(
           *BT, "Call to pure function during construction", N);
-
       const unsigned Ctorflag = State->get<ConstructorFlag>();
       Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Ctorflag));
       C.emitReport(std::move(Reporter));

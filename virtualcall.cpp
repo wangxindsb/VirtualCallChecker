@@ -155,6 +155,12 @@ void N::callFooOfM(M* m) {
     // expected-warning:Call to virtual function during construction
 }
 
+class Y {
+public:
+  virtual void foobar();
+  Y() {foobar();}
+};
+
 int main() {
   B b;
   C c;
@@ -167,4 +173,6 @@ int main() {
   X x;
   X x1(1);
   M m;
+  Y *y = new Y;
+  delete y;
 }
