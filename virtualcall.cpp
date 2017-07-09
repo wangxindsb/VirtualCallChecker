@@ -85,6 +85,7 @@ public:
 
 class G {
 public:
+  G() {F f; bar();}
   virtual void bar();
   void foo() {
     bar();
