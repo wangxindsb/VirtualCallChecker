@@ -98,10 +98,10 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
   std::string InfoText;
   if (CD) {
     DeclName = CD->getNameAsString();
-    InfoText = "Called from this constrctor " + DeclName;
+    InfoText = "Called from this constrctor '" + DeclName + "'";
   } else {
     DeclName = DD->getNameAsString();
-    InfoText = "called from this destructor " + DeclName;
+    InfoText = "Called from this destrctor '" + DeclName + "'";
   }
 
   // Generate the extra diagnostic.
