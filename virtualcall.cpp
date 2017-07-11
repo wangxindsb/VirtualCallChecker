@@ -88,7 +88,7 @@ public:
   G() {foo();}
   virtual void bar();
   void foo() {
-   F f;
+   F f1;
     bar();
       // no warning
   }

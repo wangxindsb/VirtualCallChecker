@@ -40,20 +40,18 @@ public:
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
 
 private:
-  bool IsVirtualCall(const CallExpr *CE) const;
-
   class VirtualBugVisitor : public BugReporterVisitorImpl<VirtualBugVisitor> {
   private:
-    const MemRegion *Region;
+    const MemRegion *ObjectRegion;
     bool Found;
 
   public:
-    VirtualBugVisitor(const MemRegion *R) : Region(R), Found(false) {}
+    VirtualBugVisitor(const MemRegion *R) : ObjectRegion(R), Found(false) {}
 
     void Profile(llvm::FoldingSetNodeID &ID) const override {
       static int X = 0;
       ID.AddPointer(&X);
-      ID.AddPointer(Region);
+      ID.AddPointer(ObjectRegion);
     }
 
     std::shared_ptr<PathDiagnosticPiece> VisitNode(const ExplodedNode *N,
@@ -80,13 +78,20 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
 
   ProgramStateRef State = N->getState();
   const LocationContext *LCtx = N->getLocationContext();
+  ProgramStateManager &PSM = State->getStateManager();
+  auto &SVB = PSM.getSValBuilder();
   const CXXConstructorDecl *CD =
       dyn_cast_or_null<CXXConstructorDecl>(LCtx->getDecl());
   const CXXDestructorDecl *DD =
       dyn_cast_or_null<CXXDestructorDecl>(LCtx->getDecl());
 
-  if ((!CD && !DD) ||
-      (!State->get<CtorMap>(Region) && !State->get<DtorMap>(Region)))
+  if (!CD && !DD)
+    return nullptr;
+  const auto *MD = dyn_cast<CXXMethodDecl>(LCtx->getDecl());
+  auto ThiSVal =
+      State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
+  const MemRegion *Reg = ThiSVal.getAsRegion();
+  if (Reg != ObjectRegion)
     return nullptr;
 
   const Stmt *S = PathDiagnosticLocation::getStmt(N);
@@ -110,6 +115,31 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
   return std::make_shared<PathDiagnosticEventPiece>(Pos, InfoText, true);
 }
 
+// The function to check if a callexpr is a virtual function.
+static bool IsVirtualCall(const CallExpr *CE) {
+  bool CallIsNonVirtual = false;
+
+  if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
+    // The member access is fully qualified (i.e., X::F).
+    // Treat this as a non-virtual call and do not warn.
+    if (CME->getQualifier())
+      CallIsNonVirtual = true;
+
+    if (const Expr *Base = CME->getBase()->IgnoreImpCasts()) {
+      // The most derived class is marked final.
+      if (Base->getBestDynamicClassType()->hasAttr<FinalAttr>())
+        CallIsNonVirtual = true;
+    }
+  }
+
+  const CXXMethodDecl *MD =
+      dyn_cast_or_null<CXXMethodDecl>(CE->getDirectCallee());
+  if (MD && MD->isVirtual() && !CallIsNonVirtual && !MD->hasAttr<FinalAttr>() &&
+      !MD->getParent()->hasAttr<FinalAttr>())
+    return true;
+  return false;
+}
+
 // The BeginFunction callback when enter a constructor or a destructor.
 void VirtualCallChecker::checkBeginFunction(CheckerContext &C) const {
   const auto *LCtx = C.getLocationContext();
@@ -118,10 +148,10 @@ void VirtualCallChecker::checkBeginFunction(CheckerContext &C) const {
     return;
 
   ProgramStateRef State = C.getState();
+  auto &SVB = C.getSValBuilder();
 
   // Enter a constructor, set the corresponding memregion be true.
   if (isa<CXXConstructorDecl>(MD)) {
-    auto &SVB = C.getSValBuilder();
     auto ThiSVal =
         State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
     const MemRegion *Reg = ThiSVal.getAsRegion();
@@ -132,7 +162,6 @@ void VirtualCallChecker::checkBeginFunction(CheckerContext &C) const {
 
   // Enter a Destructor, set the corresponding memregion be true.
   if (isa<CXXDestructorDecl>(MD)) {
-    auto &SVB = C.getSValBuilder();
     auto ThiSVal =
         State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
     const MemRegion *Reg = ThiSVal.getAsRegion();
@@ -150,10 +179,10 @@ void VirtualCallChecker::checkEndFunction(CheckerContext &C) const {
     return;
 
   ProgramStateRef State = C.getState();
+  auto &SVB = C.getSValBuilder();
 
   // Leave a constructor, remove the corresponding memregion.
   if (isa<CXXConstructorDecl>(MD)) {
-    auto &SVB = C.getSValBuilder();
     auto ThiSVal =
         State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
     const MemRegion *Reg = ThiSVal.getAsRegion();
@@ -164,7 +193,6 @@ void VirtualCallChecker::checkEndFunction(CheckerContext &C) const {
 
   // Leave a destructor, remove the corresponding memregion.
   if (isa<CXXDestructorDecl>(MD)) {
-    auto &SVB = C.getSValBuilder();
     auto ThiSVal =
         State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
     const MemRegion *Reg = ThiSVal.getAsRegion();
@@ -176,27 +204,23 @@ void VirtualCallChecker::checkEndFunction(CheckerContext &C) const {
 
 void VirtualCallChecker::checkPreCall(const CallEvent &Call,
                                       CheckerContext &C) const {
+  const auto MC = dyn_cast<CXXMemberCall>(&Call);
+  if (!MC)
+    return;
+
   const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(Call.getDecl());
-  if (!MD)
-    return;
-
-  if (isa<CXXConstructorDecl>(MD) || isa<CXXDestructorDecl>(MD))
-    return;
-
-  const auto IC = dyn_cast<CXXInstanceCall>(&Call);
-  if (!IC)
-    return;
-
   ProgramStateRef State = C.getState();
   const CallExpr *CE = dyn_cast_or_null<CallExpr>(Call.getOriginExpr());
-  const MemRegion *Reg = IC->getCXXThisVal().getAsRegion();
+  const MemRegion *Reg = MC->getCXXThisVal().getAsRegion();
 
   if (IsPureOnly && !MD->isPure())
     return;
+  if (!IsVirtualCall(CE))
+    return; 
 
   // Check if a virtual method is called.
   // The GDM of constructor and destructor should be true.
-  if (IsVirtualCall(CE) && State->get<CtorMap>(Reg)) {
+  if (State->get<CtorMap>(Reg)) {
     if (IsPureOnly && MD->isPure()) {
       ExplodedNode *N = C.generateErrorNode();
       if (!N)
@@ -222,7 +246,7 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
     }
   }
 
-  if (IsVirtualCall(CE) && State->get<DtorMap>(Reg)) {
+  if (State->get<DtorMap>(Reg)) {
     if (IsPureOnly && MD->isPure()) {
       ExplodedNode *N = C.generateErrorNode();
       if (!N)
@@ -247,31 +271,6 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
       return;
     }
   }
-}
-
-// The function to check if a callexpr is a virtual function.
-bool VirtualCallChecker::IsVirtualCall(const CallExpr *CE) const {
-  bool CallIsNonVirtual = false;
-
-  if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
-    // The member access is fully qualified (i.e., X::F).
-    // Treat this as a non-virtual call and do not warn.
-    if (CME->getQualifier())
-      CallIsNonVirtual = true;
-
-    if (const Expr *Base = CME->getBase()->IgnoreImpCasts()) {
-      // The most derived class is marked final.
-      if (Base->getBestDynamicClassType()->hasAttr<FinalAttr>())
-        CallIsNonVirtual = true;
-    }
-  }
-
-  const CXXMethodDecl *MD =
-      dyn_cast_or_null<CXXMethodDecl>(CE->getDirectCallee());
-  if (MD && MD->isVirtual() && !CallIsNonVirtual && !MD->hasAttr<FinalAttr>() &&
-      !MD->getParent()->hasAttr<FinalAttr>())
-    return true;
-  return false;
 }
 
 void ento::registerVirtualCallChecker(CheckerManager &mgr) {
