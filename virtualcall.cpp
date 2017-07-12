@@ -85,10 +85,9 @@ public:
 
 class G {
 public:
-  G() {foo();}
+  G() {}
   virtual void bar();
   void foo() {
-   F f1;
     bar();
       // no warning
   }
@@ -160,7 +159,10 @@ void N::callFooOfM(M* m) {
 class Y {
 public:
   virtual void foobar();
-  Y() {foobar();}
+  Y() {
+    F f1;
+    foobar();
+  }
 };
 
 int main() {

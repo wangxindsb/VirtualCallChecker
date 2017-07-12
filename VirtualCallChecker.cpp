@@ -40,6 +40,11 @@ public:
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
 
 private:
+  void registerCtorDtorCallInState(bool IsBeginFunction,
+                                   CheckerContext &C) const;
+  void reportbug(StringRef Msg, bool PureError, const MemRegion *Reg,
+                 CheckerContext &C) const;
+
   class VirtualBugVisitor : public BugReporterVisitorImpl<VirtualBugVisitor> {
   private:
     const MemRegion *ObjectRegion;
@@ -116,7 +121,7 @@ VirtualCallChecker::VirtualBugVisitor::VisitNode(const ExplodedNode *N,
 }
 
 // The function to check if a callexpr is a virtual function.
-static bool IsVirtualCall(const CallExpr *CE) {
+static bool isVirtualCall(const CallExpr *CE) {
   bool CallIsNonVirtual = false;
 
   if (const MemberExpr *CME = dyn_cast<MemberExpr>(CE->getCallee())) {
@@ -142,64 +147,12 @@ static bool IsVirtualCall(const CallExpr *CE) {
 
 // The BeginFunction callback when enter a constructor or a destructor.
 void VirtualCallChecker::checkBeginFunction(CheckerContext &C) const {
-  const auto *LCtx = C.getLocationContext();
-  const auto *MD = dyn_cast<CXXMethodDecl>(LCtx->getDecl());
-  if (!MD)
-    return;
-
-  ProgramStateRef State = C.getState();
-  auto &SVB = C.getSValBuilder();
-
-  // Enter a constructor, set the corresponding memregion be true.
-  if (isa<CXXConstructorDecl>(MD)) {
-    auto ThiSVal =
-        State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
-    const MemRegion *Reg = ThiSVal.getAsRegion();
-    State = State->set<CtorMap>(Reg, true);
-    C.addTransition(State);
-    return;
-  }
-
-  // Enter a Destructor, set the corresponding memregion be true.
-  if (isa<CXXDestructorDecl>(MD)) {
-    auto ThiSVal =
-        State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
-    const MemRegion *Reg = ThiSVal.getAsRegion();
-    State = State->set<DtorMap>(Reg, true);
-    C.addTransition(State);
-    return;
-  }
+  registerCtorDtorCallInState(true, C);
 }
 
 // The EndFunction callback when leave a constructor or a destructor.
 void VirtualCallChecker::checkEndFunction(CheckerContext &C) const {
-  const auto *LCtx = C.getLocationContext();
-  const auto *MD = dyn_cast<CXXMethodDecl>(LCtx->getDecl());
-  if (!MD)
-    return;
-
-  ProgramStateRef State = C.getState();
-  auto &SVB = C.getSValBuilder();
-
-  // Leave a constructor, remove the corresponding memregion.
-  if (isa<CXXConstructorDecl>(MD)) {
-    auto ThiSVal =
-        State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
-    const MemRegion *Reg = ThiSVal.getAsRegion();
-    State = State->remove<CtorMap>(Reg);
-    C.addTransition(State);
-    return;
-  }
-
-  // Leave a destructor, remove the corresponding memregion.
-  if (isa<CXXDestructorDecl>(MD)) {
-    auto ThiSVal =
-        State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
-    const MemRegion *Reg = ThiSVal.getAsRegion();
-    State = State->remove<DtorMap>(Reg);
-    C.addTransition(State);
-    return;
-  }
+  registerCtorDtorCallInState(false, C);
 }
 
 void VirtualCallChecker::checkPreCall(const CallEvent &Call,
@@ -215,62 +168,83 @@ void VirtualCallChecker::checkPreCall(const CallEvent &Call,
 
   if (IsPureOnly && !MD->isPure())
     return;
-  if (!IsVirtualCall(CE))
-    return; 
+  if (!isVirtualCall(CE))
+    return;
 
   // Check if a virtual method is called.
   // The GDM of constructor and destructor should be true.
   if (State->get<CtorMap>(Reg)) {
-    if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateErrorNode();
-      if (!N)
-        return;
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to pure function during construction", N);
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Reg));
-      C.emitReport(std::move(Reporter));
-      return;
-    } else {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to virtual function during construction", N);
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Reg));
-      C.emitReport(std::move(Reporter));
-      return;
-    }
+    if (IsPureOnly && MD->isPure())
+      reportbug("Call to pure function during construction", true, Reg, C);
+    else
+      reportbug("Call to virtual function during construction", false, Reg, C);
   }
 
   if (State->get<DtorMap>(Reg)) {
-    if (IsPureOnly && MD->isPure()) {
-      ExplodedNode *N = C.generateErrorNode();
-      if (!N)
-        return;
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to pure function during destruction", N);
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Reg));
-      C.emitReport(std::move(Reporter));
-      return;
-    } else {
-      ExplodedNode *N = C.generateNonFatalErrorNode();
-      if (!BT)
-        BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
-
-      auto Reporter = llvm::make_unique<BugReport>(
-          *BT, "Call to virtual function during destruction", N);
-      Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Reg));
-      C.emitReport(std::move(Reporter));
-      return;
-    }
+    if (IsPureOnly && MD->isPure())
+      reportbug("Call to pure function during destruction", true, Reg, C);
+    else
+      reportbug("Call to virtual function during destruction", false, Reg, C);
   }
+}
+
+void VirtualCallChecker::registerCtorDtorCallInState(bool IsBeginFunction,
+                                                     CheckerContext &C) const {
+  const auto *LCtx = C.getLocationContext();
+  const auto *MD = dyn_cast<CXXMethodDecl>(LCtx->getDecl());
+  if (!MD)
+    return;
+
+  ProgramStateRef State = C.getState();
+  auto &SVB = C.getSValBuilder();
+
+  // Enter a constructor, set the corresponding memregion be true.
+  if (isa<CXXConstructorDecl>(MD)) {
+    auto ThiSVal =
+        State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
+    const MemRegion *Reg = ThiSVal.getAsRegion();
+    if (IsBeginFunction)
+      State = State->set<CtorMap>(Reg, true);
+    else
+      State = State->remove<CtorMap>(Reg);
+
+    C.addTransition(State);
+    return;
+  }
+
+  // Enter a Destructor, set the corresponding memregion be true.
+  if (isa<CXXDestructorDecl>(MD)) {
+    auto ThiSVal =
+        State->getSVal(SVB.getCXXThis(MD, LCtx->getCurrentStackFrame()));
+    const MemRegion *Reg = ThiSVal.getAsRegion();
+    if (IsBeginFunction)
+      State = State->set<CtorMap>(Reg, true);
+    else
+      State = State->remove<CtorMap>(Reg);
+
+    C.addTransition(State);
+    return;
+  }
+}
+
+void VirtualCallChecker::reportbug(StringRef Msg, bool PureError,
+                                   const MemRegion *Reg,
+                                   CheckerContext &C) const {
+  ExplodedNode *N;
+  if (PureError)
+    N = C.generateErrorNode();
+  else
+    N = C.generateNonFatalErrorNode();
+
+  if (!N)
+    return;
+  if (!BT)
+    BT.reset(new BugType(this, "Virtual Call", "Path-Sensitive"));
+
+  auto Reporter = llvm::make_unique<BugReport>(*BT, Msg, N);
+  Reporter->addVisitor(llvm::make_unique<VirtualBugVisitor>(Reg));
+  C.emitReport(std::move(Reporter));
+  return;
 }
 
 void ento::registerVirtualCallChecker(CheckerManager &mgr) {
